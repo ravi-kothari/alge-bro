@@ -1,14 +1,10 @@
-import { GoogleGenAI, Type, Part } from "@google/genai";
-import type { Lesson, RealWorldExample, Subject } from '../types';
 
-// Lazily initialize the AI client to prevent crash on deployment
-const getAiClient = () => {
-  const API_KEY = process.env.API_KEY;
-  if (!API_KEY) {
-    throw new Error("API_KEY environment variable not set. Please configure it in your deployment settings.");
-  }
-  return new GoogleGenAI({ apiKey: API_KEY });
-};
+import { GoogleGenAI, Type } from '@google/genai';
+import type { Lesson } from '../types';
+
+// The API key must be obtained exclusively from the environment variable process.env.API_KEY
+// Fix: Initialize GoogleGenAI with a named apiKey parameter
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
 const lessonSchema = {
   type: Type.OBJECT,
@@ -75,160 +71,34 @@ const lessonSchema = {
   required: ['topic', 'introduction', 'coreConcept', 'quiz', 'practiceProblems'],
 };
 
-const topicsSchema = {
-    type: Type.OBJECT,
-    properties: {
-        topics: {
-            type: Type.ARRAY,
-            items: { 
-                type: Type.STRING,
-                description: "A specific, teachable topic for a 7th grader." 
-            }
-        }
-    },
-    required: ['topics']
-};
+export const generateLesson = async (topic: string, subject: string): Promise<Lesson> => {
+  const prompt = `You are an expert ${subject} teacher creating a personalized lesson plan for a student. The topic is "${topic}".
+  
+  Generate a comprehensive lesson based on this topic. The lesson should include:
+  1.  An engaging **introduction** to the topic.
+  2.  A **core concept** section that explains the main idea in detail, including its title, a thorough explanation, and 3 real-world examples with explanations.
+  3.  A **quiz** titled "Test Your Knowledge" with 5 multiple-choice questions to test understanding. Each question should have 4 options.
+  4.  A **practice problems** section titled "Practice Makes Perfect" with 3 problems that require the student to apply the concept. Provide just the problem and the final answer.
 
-const examplesSchema = {
-  type: Type.OBJECT,
-  properties: {
-    examples: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          example: { type: Type.STRING },
-          explanation: { type: Type.STRING },
-        },
-        required: ['example', 'explanation'],
-      },
-    },
-  },
-  required: ['examples'],
-};
-
-export const generateLesson = async (topic: string, subject: Subject): Promise<Lesson> => {
-  const ai = getAiClient();
-  const prompt = `
-    You are an expert curriculum designer and teacher specializing in creating engaging content for 7th-grade students.
-    Your task is to generate a complete mini-lesson on the ${subject} topic of "${topic}".
-    The lesson should be structured to be completed in about 30 minutes.
-    It must include:
-    1. A simple introduction to the concept.
-    2. A core concept explanation with real-world examples that a 12-13 year old can relate to.
-    3. A multiple-choice quiz with 3-4 questions to check understanding.
-    4. A set of 2-3 practice problems that require the student to type in the answer (not multiple-choice).
-    
-    The entire output must be a single, valid JSON object that adheres to the provided schema. Do not include any text, markdown, or code fences outside of the JSON object.
-  `;
+  Format the entire output as a single JSON object that strictly adheres to the provided schema. Do not include any markdown formatting or explanations outside of the JSON structure.`;
 
   try {
+    // Fix: Use ai.models.generateContent to query GenAI
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: 'gemini-2.5-pro', // Using pro for complex structured generation
       contents: prompt,
       config: {
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         responseSchema: lessonSchema,
-        temperature: 0.7,
       },
     });
 
+    // Fix: Extract text directly from the response object
     const jsonText = response.text.trim();
-    const lessonData = JSON.parse(jsonText) as Lesson;
+    const lessonData: Lesson = JSON.parse(jsonText);
     return lessonData;
-
   } catch (error) {
     console.error("Error generating lesson:", error);
-    throw new Error(`Failed to generate the ${subject} lesson. Please try again with a different topic.`);
-  }
-};
-
-const fileToGenerativePart = async (file: File): Promise<Part> => {
-    const base64EncodedDataPromise = new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-      reader.readAsDataURL(file);
-    });
-    return {
-      inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
-    };
-};
-
-const extractTopics = async (content: string | Part, subject: Subject): Promise<string[]> => {
-    const ai = getAiClient();
-    const prompt = `
-        You are an expert curriculum analyzer. Your task is to analyze the provided 7th-grade ${subject} curriculum document or content and extract a list of specific, teachable topics suitable for a 15-30 minute mini-lesson.
-        The topics should be granular enough for a single session (e.g., "Finding the area of a circle" instead of just "Geometry", or "The Water Cycle" instead of just "Earth Science").
-        Return the topics as a single, valid JSON object that adheres to the provided schema. Do not include any text, markdown, or code fences outside of the JSON object.
-    `;
-
-    const contents = typeof content === 'string' 
-        ? prompt + "\n\nCurriculum content: " + content 
-        : { parts: [{ text: prompt }, content] };
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: contents,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: topicsSchema,
-            },
-        });
-
-        const jsonText = response.text.trim();
-        const result = JSON.parse(jsonText) as { topics: string[] };
-        if (!result.topics || result.topics.length === 0) {
-            throw new Error("No topics were extracted. The document might be empty or in an unsupported format.");
-        }
-        return result.topics;
-
-    } catch (error) {
-        console.error("Error extracting topics:", error);
-        throw new Error("Failed to extract topics from the provided source. Please check the content and try again.");
-    }
-};
-
-export const extractTopicsFromFile = async (file: File, subject: Subject): Promise<string[]> => {
-    const filePart = await fileToGenerativePart(file);
-    return extractTopics(filePart, subject);
-};
-
-export const extractTopicsFromKhanAcademy = async (subject: Subject): Promise<string[]> => {
-    const khanPrompt = `Please provide a comprehensive list of 7th-grade ${subject} topics as covered by the Khan Academy curriculum.`;
-    return extractTopics(khanPrompt, subject);
-};
-
-export const generateMoreExamples = async (topic: string, subject: Subject, existingExamples: RealWorldExample[]): Promise<RealWorldExample[]> => {
-  const ai = getAiClient();
-  const existingExamplesString = existingExamples.map(e => `- ${e.example}`).join('\n');
-
-  const prompt = `
-    You are a creative teacher for 7th graders. 
-    A student needs more real-world examples for the ${subject} topic "${topic}".
-    Please provide 2 new, simple, and distinct examples that are different from the ones they've already seen.
-    
-    Here are the examples the student already has:
-    ${existingExamplesString}
-
-    Provide only the new examples. The entire output must be a single, valid JSON object that adheres to the provided schema. Do not include any text, markdown, or code fences outside of the JSON object.
-  `;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: examplesSchema,
-      },
-    });
-
-    const jsonText = response.text.trim();
-    const result = JSON.parse(jsonText) as { examples: RealWorldExample[] };
-    return result.examples;
-  } catch (error) {
-    console.error("Error generating more examples:", error);
-    throw new Error("Failed to generate more examples. Please try again.");
+    throw new Error("Failed to generate lesson. The topic might be too broad or the service is currently unavailable. Please try again.");
   }
 };
