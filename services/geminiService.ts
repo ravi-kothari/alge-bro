@@ -1,13 +1,14 @@
 import { GoogleGenAI, Type, Part } from "@google/genai";
 import type { Lesson, RealWorldExample, Subject } from '../types';
 
-const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-  throw new Error("API_KEY environment variable not set");
-}
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+// Lazily initialize the AI client to prevent crash on deployment
+const getAiClient = () => {
+  const API_KEY = process.env.API_KEY;
+  if (!API_KEY) {
+    throw new Error("API_KEY environment variable not set. Please configure it in your deployment settings.");
+  }
+  return new GoogleGenAI({ apiKey: API_KEY });
+};
 
 const lessonSchema = {
   type: Type.OBJECT,
@@ -107,6 +108,7 @@ const examplesSchema = {
 };
 
 export const generateLesson = async (topic: string, subject: Subject): Promise<Lesson> => {
+  const ai = getAiClient();
   const prompt = `
     You are an expert curriculum designer and teacher specializing in creating engaging content for 7th-grade students.
     Your task is to generate a complete mini-lesson on the ${subject} topic of "${topic}".
@@ -153,6 +155,7 @@ const fileToGenerativePart = async (file: File): Promise<Part> => {
 };
 
 const extractTopics = async (content: string | Part, subject: Subject): Promise<string[]> => {
+    const ai = getAiClient();
     const prompt = `
         You are an expert curriculum analyzer. Your task is to analyze the provided 7th-grade ${subject} curriculum document or content and extract a list of specific, teachable topics suitable for a 15-30 minute mini-lesson.
         The topics should be granular enough for a single session (e.g., "Finding the area of a circle" instead of just "Geometry", or "The Water Cycle" instead of just "Earth Science").
@@ -197,6 +200,7 @@ export const extractTopicsFromKhanAcademy = async (subject: Subject): Promise<st
 };
 
 export const generateMoreExamples = async (topic: string, subject: Subject, existingExamples: RealWorldExample[]): Promise<RealWorldExample[]> => {
+  const ai = getAiClient();
   const existingExamplesString = existingExamples.map(e => `- ${e.example}`).join('\n');
 
   const prompt = `
