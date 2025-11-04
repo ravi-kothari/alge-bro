@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { generateLesson } from './services/geminiService';
-import type { Lesson, ActiveTab, Subject, LessonRecord, Mistake, UserProgress, ProgressStats } from './types';
+import { generateLesson, extractTopicsFromFile, getKhanAcademyTopics, generateMoreExamples } from './services/geminiService';
+import type { Lesson, ActiveTab, Subject, LessonRecord, Mistake, UserProgress, ProgressStats, TopicSource } from './types';
 import Quiz from './components/Quiz';
 import PracticeProblems from './components/PracticeProblems';
 import LoadingSpinner from './components/LoadingSpinner';
@@ -60,7 +60,6 @@ const ApiKeySetup: React.FC<{ onApiKeySet: () => void }> = ({ onApiKeySet }) => 
 const App: React.FC = () => {
     const [apiKeySet, setApiKeySet] = useState<boolean>(false);
     
-    // Check for API key on initial load
     useEffect(() => {
         if (loadApiKey()) {
             setApiKeySet(true);
@@ -74,6 +73,11 @@ const App: React.FC = () => {
 
     const [topic, setTopic] = useState<string>('');
     const [subject, setSubject] = useState<Subject>('Math');
+
+    const [topicSource, setTopicSource] = useState<TopicSource>('manual');
+    const [parsedTopics, setParsedTopics] = useState<string[]>([]);
+    const [isParsingTopics, setIsParsingTopics] = useState<boolean>(false);
+    const [isGeneratingExamples, setIsGeneratingExamples] = useState<boolean>(false);
 
     const [quizResult, setQuizResult] = useState<{ score: number; total: number; time: number; mistakes: Mistake[] } | null>(null);
     const [problemsResult, setProblemsResult] = useState<{ score: number; total: number; time: number; mistakes: Mistake[] } | null>(null);
@@ -104,6 +108,15 @@ const App: React.FC = () => {
         }
     }, [quizResult, problemsResult, lesson]);
 
+    useEffect(() => {
+        setParsedTopics([]);
+        setTopic('');
+        if (topicSource !== 'manual') {
+            setTopicSource('manual');
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [subject]);
+
 
     const handleGenerateLesson = async () => {
         if (!topic.trim()) {
@@ -127,6 +140,75 @@ const App: React.FC = () => {
         }
     };
 
+    const handleTopicSourceChange = (source: TopicSource) => {
+        setTopicSource(source);
+        setParsedTopics([]);
+        setTopic('');
+        setError(null);
+    };
+
+    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        setIsParsingTopics(true);
+        setError(null);
+        setParsedTopics([]);
+
+        try {
+            const topics = await extractTopicsFromFile(file);
+            setParsedTopics(topics);
+            if (topics.length > 0) {
+                setTopic(topics[0]);
+            }
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsParsingTopics(false);
+            event.target.value = '';
+        }
+    };
+    
+    const handleKhanClick = async () => {
+        setIsParsingTopics(true);
+        setError(null);
+        setParsedTopics([]);
+
+        try {
+            const topics = await getKhanAcademyTopics(subject);
+            setParsedTopics(topics);
+            if (topics.length > 0) {
+                setTopic(topics[0]);
+            }
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsParsingTopics(false);
+        }
+    };
+    
+    const handleGenerateMoreExamples = async () => {
+        if (!lesson) return;
+        setIsGeneratingExamples(true);
+        try {
+            const newExamples = await generateMoreExamples(lesson.topic, subject, lesson.coreConcept.realWorldExamples);
+            setLesson(prevLesson => {
+                if (!prevLesson) return null;
+                return {
+                    ...prevLesson,
+                    coreConcept: {
+                        ...prevLesson.coreConcept,
+                        realWorldExamples: [...prevLesson.coreConcept.realWorldExamples, ...newExamples]
+                    }
+                };
+            });
+        } catch (err: any) {
+            console.error(err);
+        } finally {
+            setIsGeneratingExamples(false);
+        }
+    };
+
     const handleQuizComplete = (score: number, total: number, timeTaken: number, mistakes: Mistake[]) => {
         setQuizResult({ score, total, time: timeTaken, mistakes });
     };
@@ -147,7 +229,7 @@ const App: React.FC = () => {
                         </div>
                         <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-md">
                             <h3 className="text-2xl font-semibold text-brand-600 dark:text-brand-400 mb-3">{lesson.coreConcept.title}</h3>
-                            <p className="text-gray-600 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{lesson.coreConcept.explanation}</p>
+                            <p className="font-sans text-gray-600 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{lesson.coreConcept.explanation}</p>
                         </div>
                          <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-md">
                             <h3 className="text-2xl font-semibold text-brand-600 dark:text-brand-400 mb-4">Real-World Examples</h3>
@@ -158,6 +240,15 @@ const App: React.FC = () => {
                                         <p className="text-gray-600 dark:text-gray-400 mt-1">{ex.explanation}</p>
                                     </div>
                                 ))}
+                            </div>
+                            <div className="mt-6">
+                                <button
+                                    onClick={handleGenerateMoreExamples}
+                                    disabled={isGeneratingExamples}
+                                    className="px-5 py-2 text-sm font-semibold text-white bg-brand-500 rounded-md hover:bg-brand-600 disabled:bg-brand-300 disabled:cursor-wait transition-colors"
+                                >
+                                    {isGeneratingExamples ? 'Thinking...' : '🤔 I need another example'}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -196,17 +287,61 @@ const App: React.FC = () => {
         <div className="max-w-4xl mx-auto">
             <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg mb-8">
                 <h2 className="text-xl font-semibold mb-4">Generate a New Lesson</h2>
+                
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">How would you like to choose a topic?</label>
+                    <div className="flex flex-wrap gap-2 rounded-md bg-gray-100 dark:bg-gray-700 p-1">
+                        {(['manual', 'upload', 'khan'] as TopicSource[]).map(source => (
+                            <button key={source} onClick={() => handleTopicSourceChange(source)} className={`px-3 py-1.5 text-sm font-medium rounded-md flex-1 transition-colors ${topicSource === source ? 'bg-white dark:bg-gray-800 text-brand-600 dark:text-brand-400 shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600'}`}>
+                                {source === 'manual' && 'Enter Manually'}
+                                {source === 'upload' && 'Upload Syllabus'}
+                                {source === 'khan' && 'From Khan Academy'}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="sm:col-span-2">
                         <label htmlFor="topic" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Topic</label>
-                        <input
-                            type="text"
-                            id="topic"
-                            value={topic}
-                            onChange={(e) => setTopic(e.target.value)}
-                            placeholder="e.g., Quadratic Equations, Photosynthesis"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400"
-                        />
+                        {topicSource === 'manual' && (
+                            <input
+                                type="text"
+                                id="topic"
+                                value={topic}
+                                onChange={(e) => setTopic(e.target.value)}
+                                placeholder={`e.g., Quadratic Equations, Photosynthesis`}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400"
+                            />
+                        )}
+                        {topicSource === 'upload' && (
+                             <input
+                                type="file"
+                                id="syllabus-upload"
+                                onChange={handleFileChange}
+                                accept=".txt,.pdf,.doc,.docx"
+                                className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100 dark:file:bg-brand-900/50 dark:file:text-brand-300 dark:hover:file:bg-brand-900"
+                                disabled={isParsingTopics}
+                            />
+                        )}
+                        {topicSource === 'khan' && (
+                             <button onClick={handleKhanClick} disabled={isParsingTopics} className="w-full px-3 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-brand-600 hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500 disabled:bg-brand-400">
+                                {isParsingTopics ? 'Loading...' : `Load 7th Grade ${subject} Topics`}
+                            </button>
+                        )}
+                        
+                        {isParsingTopics && <div className="mt-2"><LoadingSpinner /></div>}
+                        
+                        {parsedTopics.length > 0 && !isParsingTopics && (
+                            <select
+                                id="topic-select"
+                                value={topic}
+                                onChange={(e) => setTopic(e.target.value)}
+                                className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:border-gray-600"
+                            >
+                                {parsedTopics.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                        )}
                     </div>
                      <div>
                         <label htmlFor="subject" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subject</label>
@@ -223,7 +358,7 @@ const App: React.FC = () => {
                 </div>
                 <button
                     onClick={handleGenerateLesson}
-                    disabled={isLoading}
+                    disabled={isLoading || isParsingTopics}
                     className="mt-4 w-full sm:w-auto inline-flex items-center justify-center px-6 py-2 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-brand-600 hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500 disabled:bg-brand-400 disabled:cursor-not-allowed transition-colors"
                 >
                     {isLoading ? 'Generating...' : 'Create Lesson'}

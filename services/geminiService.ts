@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import type { Lesson } from '../types';
+import type { Lesson, RealWorldExample, Subject } from '../types';
 import { loadApiKey } from '../utils/progress';
 
 // DO NOT initialize the AI client at the top level. This causes a crash in production.
@@ -12,6 +12,19 @@ const getAiClient = (): GoogleGenAI => {
   }
   return new GoogleGenAI({ apiKey });
 };
+
+// Helper function to convert a File object to a base64 string for the API
+const fileToGenerativePart = async (file: File) => {
+  const base64EncodedDataPromise = new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+    reader.readAsDataURL(file);
+  });
+  return {
+    inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+  };
+};
+
 
 const lessonSchema = {
   type: Type.OBJECT,
@@ -112,4 +125,106 @@ export const generateLesson = async (topic: string, subject: string): Promise<Le
     }
     throw new Error("Failed to generate lesson. The topic might be too broad or the service is currently unavailable. Please try again.");
   }
+};
+
+const topicsSchema = {
+    type: Type.OBJECT,
+    properties: {
+        topics: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+        }
+    },
+    required: ['topics']
+};
+
+export const extractTopicsFromFile = async (file: File): Promise<string[]> => {
+    const ai = getAiClient();
+    const filePart = await fileToGenerativePart(file);
+    const textPart = { text: "Extract a list of 7th-grade level educational topics from this document. The topics should be suitable for generating a 15-minute lesson. Return only a JSON object with a 'topics' array." };
+
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro', // Pro model is better for this kind of extraction
+            contents: { parts: [textPart, filePart] },
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: topicsSchema,
+            },
+        });
+        const jsonText = response.text.trim();
+        const data = JSON.parse(jsonText);
+        return data.topics;
+    } catch (error) {
+        console.error("Error extracting topics:", error);
+        throw new Error("Failed to extract topics from the file. Please ensure it's a valid curriculum document.");
+    }
+};
+
+export const getKhanAcademyTopics = async (subject: Subject): Promise<string[]> => {
+    const ai = getAiClient();
+    const prompt = `Generate a list of 15 key 7th-grade ${subject} topics based on the Khan Academy curriculum. The topics should be concise and suitable for generating a short lesson. Return only a JSON object with a 'topics' array.`;
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: topicsSchema,
+            },
+        });
+        const jsonText = response.text.trim();
+        const data = JSON.parse(jsonText);
+        return data.topics;
+    } catch (error) {
+        console.error("Error fetching Khan Academy topics:", error);
+        throw new Error("Failed to fetch Khan Academy topics. Please try again later.");
+    }
+};
+
+const examplesSchema = {
+    type: Type.OBJECT,
+    properties: {
+        examples: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    example: { type: Type.STRING },
+                    explanation: { type: Type.STRING }
+                },
+                required: ['example', 'explanation']
+            }
+        }
+    },
+    required: ['examples']
+};
+
+export const generateMoreExamples = async (topic: string, subject: string, existingExamples: RealWorldExample[]): Promise<RealWorldExample[]> => {
+    const ai = getAiClient();
+    const existingExamplesText = existingExamples.map(e => `- ${e.example}`).join('\n');
+    const prompt = `The lesson is about "${topic}" in ${subject}.
+    
+The student has already seen these examples:
+${existingExamplesText}
+
+Please provide 2 new, simple, and distinct real-world examples to help them understand the concept better.
+Return only a JSON object with an 'examples' array.`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: examplesSchema
+            }
+        });
+        const jsonText = response.text.trim();
+        const data = JSON.parse(jsonText);
+        return data.examples;
+    } catch (error) {
+        console.error("Error generating more examples:", error);
+        throw new Error("Failed to generate more examples. Please try again.");
+    }
 };
