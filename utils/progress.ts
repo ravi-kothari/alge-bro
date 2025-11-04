@@ -1,11 +1,31 @@
-
 import type { UserProgress, ProgressStats, LessonRecord } from '../types';
 
-const STORAGE_KEY = 'algebro-user-progress';
+const PROGRESS_STORAGE_KEY = 'algebro-user-progress';
+const API_KEY_STORAGE_KEY = 'algebro-api-key';
 
+// --- API Key Management ---
+export const saveApiKey = (apiKey: string): void => {
+  try {
+    localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
+  } catch (err) {
+    console.error("Could not save API key:", err);
+  }
+};
+
+export const loadApiKey = (): string | null => {
+  try {
+    return localStorage.getItem(API_KEY_STORAGE_KEY);
+  } catch (err) {
+    console.error("Could not load API key:", err);
+    return null;
+  }
+};
+
+
+// --- User Progress Management ---
 export const loadUserProgress = (): UserProgress => {
   try {
-    const serializedState = localStorage.getItem(STORAGE_KEY);
+    const serializedState = localStorage.getItem(PROGRESS_STORAGE_KEY);
     if (serializedState === null) {
       return { records: [] };
     }
@@ -19,7 +39,7 @@ export const loadUserProgress = (): UserProgress => {
 export const saveUserProgress = (progress: UserProgress): void => {
   try {
     const serializedState = JSON.stringify(progress);
-    localStorage.setItem(STORAGE_KEY, serializedState);
+    localStorage.setItem(PROGRESS_STORAGE_KEY, serializedState);
   } catch (err) {
     console.error("Could not save user progress:", err);
   }

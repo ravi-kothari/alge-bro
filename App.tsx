@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { generateLesson } from './services/geminiService';
 import type { Lesson, ActiveTab, Subject, LessonRecord, Mistake, UserProgress, ProgressStats } from './types';
@@ -6,9 +5,68 @@ import Quiz from './components/Quiz';
 import PracticeProblems from './components/PracticeProblems';
 import LoadingSpinner from './components/LoadingSpinner';
 import Dashboard from './components/Dashboard';
-import { loadUserProgress, addLessonRecord, calculateProgressStats } from './utils/progress';
+import { loadUserProgress, addLessonRecord, calculateProgressStats, saveApiKey, loadApiKey } from './utils/progress';
+
+const ApiKeySetup: React.FC<{ onApiKeySet: () => void }> = ({ onApiKeySet }) => {
+    const [apiKey, setApiKey] = useState('');
+    const [error, setError] = useState('');
+
+    const handleSubmit = () => {
+        if (!apiKey.trim()) {
+            setError('Please enter your API key.');
+            return;
+        }
+        saveApiKey(apiKey);
+        onApiKeySet();
+    };
+
+    return (
+        <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white p-4">
+            <div className="w-full max-w-md text-center">
+                <h1 className="text-5xl font-bold text-brand-400 mb-2">Welcome to Alge-Bro!</h1>
+                <p className="text-xl text-gray-300 mb-8">Your friendly Math & Science buddy.</p>
+                <div className="bg-gray-800 p-8 rounded-lg shadow-2xl">
+                    <h2 className="text-2xl font-bold mb-2">Connect Your API Key</h2>
+                    <p className="text-gray-400 mb-4">
+                        To start generating lessons, you'll need to provide your Google AI API key. This is a one-time setup and your key will be saved securely in your browser.
+                    </p>
+                    <input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => {
+                            setApiKey(e.target.value);
+                            setError('');
+                        }}
+                        placeholder="Enter your Google AI API key"
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:ring-brand-500 focus:border-brand-500"
+                    />
+                    {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+                    <button
+                        onClick={handleSubmit}
+                        className="mt-4 w-full px-6 py-3 bg-brand-600 text-white font-semibold rounded-lg hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-brand-500 transition-colors"
+                    >
+                        Save & Start Learning
+                    </button>
+                    <p className="text-xs text-gray-500 mt-4">
+                        You can get your key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="underline hover:text-brand-400">Google AI Studio</a>.
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 const App: React.FC = () => {
+    const [apiKeySet, setApiKeySet] = useState<boolean>(false);
+    
+    // Check for API key on initial load
+    useEffect(() => {
+        if (loadApiKey()) {
+            setApiKeySet(true);
+        }
+    }, []);
+
     const [lesson, setLesson] = useState<Lesson | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -17,11 +75,9 @@ const App: React.FC = () => {
     const [topic, setTopic] = useState<string>('');
     const [subject, setSubject] = useState<Subject>('Math');
 
-    // State for tracking completion
     const [quizResult, setQuizResult] = useState<{ score: number; total: number; time: number; mistakes: Mistake[] } | null>(null);
     const [problemsResult, setProblemsResult] = useState<{ score: number; total: number; time: number; mistakes: Mistake[] } | null>(null);
     
-    // Progress state
     const [userProgress, setUserProgress] = useState<UserProgress>(loadUserProgress());
     const [progressStats, setProgressStats] = useState<ProgressStats>(calculateProgressStats(userProgress));
     const [isDashboardOpen, setIsDashboardOpen] = useState<boolean>(false);
@@ -43,7 +99,6 @@ const App: React.FC = () => {
             setUserProgress(updatedProgress);
             setProgressStats(calculateProgressStats(updatedProgress));
             
-            // Reset for next lesson
             setQuizResult(null);
             setProblemsResult(null);
         }
@@ -118,6 +173,10 @@ const App: React.FC = () => {
 
     const isLessonComplete = quizResult && problemsResult;
     
+    if (!apiKeySet) {
+        return <ApiKeySetup onApiKeySet={() => setApiKeySet(true)} />;
+    }
+
     return (
     <div className="bg-gray-50 dark:bg-gray-900 min-h-screen font-sans text-gray-900 dark:text-gray-100">
       <header className="bg-white dark:bg-gray-800/80 backdrop-blur-sm shadow-sm sticky top-0 z-40">

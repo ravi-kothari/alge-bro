@@ -1,10 +1,17 @@
-
 import { GoogleGenAI, Type } from '@google/genai';
 import type { Lesson } from '../types';
+import { loadApiKey } from '../utils/progress';
 
-// The API key must be obtained exclusively from the environment variable process.env.API_KEY
-// Fix: Initialize GoogleGenAI with a named apiKey parameter
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+// DO NOT initialize the AI client at the top level. This causes a crash in production.
+// It will be initialized on-demand in the function below.
+
+const getAiClient = (): GoogleGenAI => {
+  const apiKey = loadApiKey();
+  if (!apiKey) {
+    throw new Error("API key not found in storage. Please set it on the start screen.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 const lessonSchema = {
   type: Type.OBJECT,
@@ -72,6 +79,9 @@ const lessonSchema = {
 };
 
 export const generateLesson = async (topic: string, subject: string): Promise<Lesson> => {
+  // Initialize the client here, just before making the API call.
+  const ai = getAiClient();
+
   const prompt = `You are an expert ${subject} teacher creating a personalized lesson plan for a student. The topic is "${topic}".
   
   Generate a comprehensive lesson based on this topic. The lesson should include:
@@ -83,7 +93,6 @@ export const generateLesson = async (topic: string, subject: string): Promise<Le
   Format the entire output as a single JSON object that strictly adheres to the provided schema. Do not include any markdown formatting or explanations outside of the JSON structure.`;
 
   try {
-    // Fix: Use ai.models.generateContent to query GenAI
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-pro', // Using pro for complex structured generation
       contents: prompt,
@@ -93,12 +102,14 @@ export const generateLesson = async (topic: string, subject: string): Promise<Le
       },
     });
 
-    // Fix: Extract text directly from the response object
     const jsonText = response.text.trim();
     const lessonData: Lesson = JSON.parse(jsonText);
     return lessonData;
   } catch (error) {
     console.error("Error generating lesson:", error);
+    if (error instanceof Error && error.message.includes('API key not valid')) {
+        throw new Error("Your API key is not valid. Please check it and try again.");
+    }
     throw new Error("Failed to generate lesson. The topic might be too broad or the service is currently unavailable. Please try again.");
   }
 };
